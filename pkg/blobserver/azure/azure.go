@@ -106,11 +106,11 @@ func newFromConfig(_ blobserver.Loader, config jsonconfig.Obj) (blobserver.Stora
 }
 
 func init() {
-	// It's assumed the MaxBlobSize won't change in the forseeable future.
+	// It's assumed the MaxBlobSize won't change in the foreseeable future.
 	// However, just in case it does, let's be aware that the current implementation doesn't support it.
 	// Azure itself can support it by splitting up requests in multiple parts but that's more work which is not yet needed.
-	if constants.MaxBlobSize > 64000000 {
-		panic("Blob sizes over 64mb aren't supported by Azure")
+	if constants.MaxBlobSize > 5000*1024*1024 {
+		panic("Blob sizes over 5000 MiB aren't supported by Azure")
 	}
 	blobserver.RegisterStorageConstructor("azure", blobserver.StorageConstructor(newFromConfig))
 }

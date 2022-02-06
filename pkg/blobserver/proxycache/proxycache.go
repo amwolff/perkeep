@@ -55,8 +55,8 @@ type Storage struct {
 	origin blobserver.Storage
 	cache  blobserver.Storage
 
-	debug         bool
-	maxCacheBytes int64
+	debug, populateOnSubFetch bool
+	maxCacheBytes             int64
 
 	mu         sync.Mutex // guards following
 	lru        *lru.Cache
@@ -74,16 +74,18 @@ var (
 // then origin, populating cache as needed, up to a total of maxBytes.
 func New(maxBytes int64, cache, origin blobserver.Storage) *Storage {
 	sto := &Storage{
-		origin:        origin,
-		cache:         cache,
-		lru:           lru.NewUnlocked(0),
-		maxCacheBytes: maxBytes,
+		origin:             origin,
+		cache:              cache,
+		debug:              true,
+		populateOnSubFetch: true,
+		lru:                lru.NewUnlocked(0),
+		maxCacheBytes:      maxBytes,
 	}
 	return sto
 }
 
 func init() {
-	blobserver.RegisterStorageConstructor("proxycache", blobserver.StorageConstructor(newFromConfig))
+	blobserver.RegisterStorageConstructor("proxycache", newFromConfig)
 }
 
 func newFromConfig(ld blobserver.Loader, config jsonconfig.Obj) (blobserver.Storage, error) {
@@ -159,15 +161,17 @@ func (sto *Storage) Fetch(ctx context.Context, b blob.Ref) (rc io.ReadCloser, si
 	if err != os.ErrNotExist {
 		log.Printf("warning: proxycache cache fetch error for %v: %v", b, err)
 	}
-	rc, size, err = sto.origin.Fetch(ctx, b)
+	var frc io.ReadCloser
+	frc, size, err = sto.origin.Fetch(ctx, b)
 	if err != nil {
 		return
 	}
-	all, err := ioutil.ReadAll(rc)
+	defer frc.Close()
+	all, err := ioutil.ReadAll(frc)
 	if err != nil {
 		return
 	}
-	if _, err := blobserver.Receive(ctx, sto.cache, b, bytes.NewReader(all)); err != nil {
+	if _, err = blobserver.Receive(ctx, sto.cache, b, bytes.NewReader(all)); err != nil {
 		log.Printf("populating proxycache cache for %v: %v", b, err)
 	} else {
 		sto.touch(blob.SizedRef{Ref: b, Size: size})
@@ -184,6 +188,29 @@ func (sto *Storage) SubFetch(ctx context.Context, ref blob.Ref, offset, length i
 		if err != os.ErrNotExist && err != blob.ErrUnimplemented {
 			log.Printf("proxycache: error fetching from cache %T: %v", sto.cache, err)
 		}
+	}
+	if sto.populateOnSubFetch {
+		if sto.debug {
+			log.Printf("start populating proxycache cache for %v on SubFetch", ref)
+		}
+		rc, size, err := sto.origin.Fetch(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+		all, err := io.ReadAll(rc)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = blobserver.Receive(ctx, sto.cache, ref, bytes.NewReader(all)); err != nil {
+			log.Printf("populating proxycache cache for %v: %v", ref, err)
+		} else {
+			sto.touch(blob.SizedRef{Ref: ref, Size: size})
+		}
+		if sto.debug {
+			log.Printf("end populating proxycache cache for %v (size=%d) on SubFetch", ref, size)
+		}
+		return io.NopCloser(io.NewSectionReader(bytes.NewReader(all), offset, length)), nil
 	}
 	if sf, ok := sto.origin.(blob.SubFetcher); ok {
 		return sf.SubFetch(ctx, ref, offset, length)
@@ -231,7 +258,7 @@ func (sto *Storage) ReceiveBlob(ctx context.Context, br blob.Ref, src io.Reader)
 		return sb, err
 	}
 
-	if _, err := sto.cache.ReceiveBlob(ctx, br, bytes.NewReader(buf.Bytes())); err != nil {
+	if _, err = sto.cache.ReceiveBlob(ctx, br, bytes.NewReader(buf.Bytes())); err != nil {
 		log.Printf("proxycache: ignoring error populating blob %v in cache: %v", br, err)
 	} else {
 		sto.touch(sb)

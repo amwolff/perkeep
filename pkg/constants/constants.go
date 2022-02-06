@@ -20,7 +20,7 @@ limitations under the License.
 package constants // import "perkeep.org/pkg/constants"
 
 // MaxBlobSize is the max size of a single blob in Perkeep, in bytes.
-const MaxBlobSize = 16 << 20
+const MaxBlobSize = 63 * 1024 * 1024
 
 // DefaultMaxResizeMem is the default maximum number of bytes that
 // will be allocated at peak for uncompressed pixel data while

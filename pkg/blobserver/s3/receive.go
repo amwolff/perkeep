@@ -53,7 +53,9 @@ func (sto *s3Storage) ReceiveBlob(ctx context.Context, b blob.Ref, source io.Rea
 }
 
 func (sto *s3Storage) doUpload(ctx context.Context, b blob.Ref, r io.Reader) error {
-	uploader := s3manager.NewUploaderWithClient(sto.client)
+	uploader := s3manager.NewUploaderWithClient(sto.client, func(uploader *s3manager.Uploader) {
+		uploader.PartSize = 63 * 1024 * 1024
+	})
 
 	_, err := uploader.UploadWithContext(ctx, &s3manager.UploadInput{
 		Bucket: &sto.bucket,
