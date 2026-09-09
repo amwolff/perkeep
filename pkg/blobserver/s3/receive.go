@@ -23,7 +23,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"go4.org/readerutil"
+
 	"perkeep.org/pkg/blob"
+	"perkeep.org/pkg/constants"
 )
 
 func (sto *s3Storage) ReceiveBlob(ctx context.Context, b blob.Ref, source io.Reader) (sr blob.SizedRef, err error) {
@@ -53,7 +55,10 @@ func (sto *s3Storage) ReceiveBlob(ctx context.Context, b blob.Ref, source io.Rea
 }
 
 func (sto *s3Storage) doUpload(ctx context.Context, b blob.Ref, r io.Reader) error {
-	uploader := s3manager.NewUploaderWithClient(sto.client)
+	// Blobs never exceed MaxBlobSize, so matching it keeps uploads to one part.
+	uploader := s3manager.NewUploaderWithClient(sto.client, func(u *s3manager.Uploader) {
+		u.PartSize = constants.MaxBlobSize
+	})
 
 	_, err := uploader.UploadWithContext(ctx, &s3manager.UploadInput{
 		Bucket: &sto.bucket,
